@@ -78,6 +78,11 @@ int main(int argc, char * argv[]) {
     pthread_t * tids; //array of thread ids
     thread_data_t * threads; //array of structs containing threads data
 
+    int totalCracked = 0; //total cracked hashes
+    int totalFailed = 0; //total failed hashes
+    int totalProcessed = 0; //total hashes proccessed by all threads
+
+
     {
 
         int opt = -1;
@@ -86,7 +91,6 @@ int main(int argc, char * argv[]) {
             switch (opt) {
                 case 'i':
                      DESfile = strdup(optarg);
-                     //how do I fail for no optarg?
                      break;
                 case 'p':
                     passwordFile = strdup(optarg);
@@ -120,14 +124,29 @@ int main(int argc, char * argv[]) {
 
     }
 
-    //is this the correct place to open the output file?
+    //might need to change all fprintf to an output file
+    //depending on requirements
     if (outFile) {
-        //what settings to I need to use?
-        outfd = open(outFile, O_WRONLY);
+        outfd = open(outFile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     }
     else {
         outfd = STDOUT_FILENO;
+    } 
+
+    if (outFile) {
+        FILE * fp = fopen(outFile, "w");
+        if (!fp) { 
+            fprintf(stderr "Output file %s refused to open", outFile); 
+            exit(EXIT_FAILURE); 
+        }
+            stdout = fp;
     }
+
+
+
+
+
+
 
     if (!DESfile || !passwordFile) {
         fprintf(stderr, "Hash and Password files not specifed");
@@ -184,22 +203,27 @@ int main(int argc, char * argv[]) {
         pthread_create(&tids[i], NULL, threadFunction, &threads[i]);
     }
 
-    //do I need to call my thread function here? 
-
+    
     //join threads
     for (int i = 0; i < threadCount; ++i) {
         pthread_join(tids[i], NULL);
     }
 
-
-    //print total summary
-
+ 
     //do I need to find a away to pass my time structs back to main?
     //do I need to display these?
-    //do I need to use a for loop, and sum all the cracked, failed and totals for all threads in my threads array?
-    //or is this information already calculated somewhere?
-    fprintf(stderr, "total : %d    <4.47> sec cracked:     %d failed: %d total: %d", threadCount, /*time*/, /*cracked*/, /*failed*/, /*total*/);
+    
 
+    //sum the total, cracked, and failed passwords from each thread
+    for (int i = 0; i < threadCount; ++i) {
+        totalCracked += threads[i].cracked;
+        totalFailed += threads[i].failed;
+        totalProcessed += threads[i].total;
+    }
+
+    
+    //print total summary
+    fprintf(stderr, "total : %d    <4.47> sec cracked:     %d failed: %d total: %d", threadCount, /*time*/, /*cracked*/, /*failed*/, /*total*/);
 
 
 
@@ -216,7 +240,8 @@ int main(int argc, char * argv[]) {
     }
     free(data.passwords);
 
-
+    free(tids);
+    free(threads);
 
     if (outFile) {
         close(outfd);
@@ -231,14 +256,14 @@ int main(int argc, char * argv[]) {
 // Return:
 void *threadFunction(void * thread) {
     
+    thread_data_t *tdata = (thread_data_t *) thread;
+    shared_data_t *shared = tdata->shared;
     int index = 0;
     int cracked = 0;
-    //is this the right way to allocate memory for this variable?
-    //ALL memory needs to be dynamically allocated
-    char * salt = malloc(3 * sizeof(char));
     char * result;
     struct crypt_data cdata;
     struct timeval start, end;
+    double elapsed = 0.0;
 
     gettimeofday(&start, NULL);
 
@@ -249,21 +274,21 @@ void *threadFunction(void * thread) {
     while (1) {
 
         //protect shared counter, cannot access shared resource unless unlocked
-        pthread_mutex_lock(&thread->shared->lock);
+        pthread_mutex_lock(&shared->lock);
 
-        index = thread->shared->nextHash;
-        ++thread->shared->nextHash;
+        index = shared->nextHash;
+        ++shared->nextHash;
 
         //iterate to next hash within mutex
-        pthread_mutex_unlock(&thread->shared->lock);
+        pthread_mutex_unlock(&shared->lock);
 
-        if (index >= thread->shared->hashCount)
+        if (index >= shared->hashCount)
             break;
 
         cracked = 0;
 
         //run cracking loop for all passwords, while thread is not cracked
-        for (int p = 0; p < thread->shared->passwordCount && !cracked; ++p) {
+        for (int p = 0; p < shared->passwordCount && !cracked; ++p) {
             //char *password = shared->passwords[p];
 
             //loop through all possible salts
@@ -272,23 +297,24 @@ void *threadFunction(void * thread) {
                 
                 for(int j = 0; j < 64; ++j) {
                     //generate next possible salt 
+                    char salt[3];
                     salt[0] = SALT[i];
                     salt[1] = SALT[j];
                     salt[2] = '\0';
 
-                    result = crypt_rn(thread->shared->passwords[p], salt, &cdata, sizeof(cdata));
+                    result = crypt_rn(shared->passwords[p], salt, &cdata, sizeof(cdata));
 
                     //check if this password + salt cracked the hash
-                    if (strcmp(result, thread->shared->hashes[index]) == 0) {
+                    if (strcmp(result, shared->hashes[index]) == 0) {
 
                         //use mutex when printing result 
-                        pthread_mutex_lock(&thread->shared->lock);
-                        printf("cracked: %s : %s\n", thread->shared->hashes[index], thread->shared->passwords[p]);
-                        pthread_mutex_unlock(&thread->shared->lock);
+                        pthread_mutex_lock(&shared->lock);
+                        printf("cracked: %s : %s\n", shared->hashes[index], thread->shared->passwords[p]);
+                        pthread_mutex_unlock(&shared->lock);
 
                         //interate this thread's number of cracked passwords
                         //good boy. 
-                        ++thread->cracked;
+                        ++tdata->cracked;
                         cracked = 1;
                         break;
                     }
@@ -300,32 +326,29 @@ void *threadFunction(void * thread) {
         //check if the thread failed to crack the hash
         if (!cracked) {
             //use mutex when printing result 
-            pthread_mutex_lock(&thread->shared->lock);
-            printf("*** failed: %s\n", thread->shared->hashes[index]);
-            pthread_mutex_unlock(&thread->shared->lock);
+            pthread_mutex_lock(&shared->lock);
+            printf("*** failed: %s\n", shared->hashes[index]);
+            pthread_mutex_unlock(&shared->lock);
 
             //iterate this threads number of failures
             //L for thread
-            ++thread->failed;
+            ++tdata->failed;
         }
 
-        ++thread->total;
+        ++tdata->total;
     }
 
     // compute time difference
     gettimeofday(&end, NULL);
+    elapsed = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1000000.0;
 
-
-    free(salt);
+    //print this thread's summary
+    //use the mutex to prevent interleaving
+    pthread_mutex_lock(&shared->lock);
+    fprintf(stderr, "thread: %2d %8.2f sec cracked: %5d failed: %5d total: %5d\n", tdata->threadId, elapsed, tdata->cracked, tdata->failed, tdata->total);
+    pthread_mutex_unlock(&shared->lock);
 
     pthread_exit(NULL);
-
-
-    //might need to fix output format entirely
-    //sent to stderr
-    //thread: 2 3.80 sec cracked: 5 failed: 1 total: 6
-    //or is this format printed at the bottom after time has been calculated?
-    //fprintf(stderr, "thread: " " sec cracked:" 5 "failed: " " total: " , thread id, time, cracked, failed, total);
 
 
 }

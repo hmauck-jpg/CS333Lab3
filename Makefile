@@ -1,21 +1,20 @@
 CC = gcc
 DEBUG = -g
 DEFINES =
-CFLAGS = $(DEBUG) -Wall -Wextra -Wshadow -Wunreachable-code
-	-Wredundant-decls -Wmissing-declarations
-	-Wold-style-definition -Wmissing-prototypes
-	-Wdeclaration-after-statement -Wno-return-local-addr
-	-Wunsafe-loop-optimizations -Wuninitialized -Werror
+CFLAGS = $(DEBUG) -Wall -Wextra -Wshadow -Wunreachable-code \
+	-Wredundant-decls -Wmissing-declarations \
+	-Wold-style-definition -Wmissing-prototypes \
+	-Wdeclaration-after-statement -Wno-return-local-addr \
+	-Wunsafe-loop-optimizations -Wuninitialized -Werror \
 	-Wno-unused-parameter $(DEFINES)
 PROG = desplodocus_mt
-INCLUDES = desplodocus_mt.h
 
 all: $(PROG)
 
 $(PROG): $(PROG).o
-	$(CC) $(CFLAGS) -o $@ $^ -lz
+	$(CC) $(CFLAGS) -o $@ $^ -pthread -lcrypt
 
-$(PROG).o: $(PROG).c $(INCLUDES)
+$(PROG).o: $(PROG).c 
 	$(CC) $(CFLAGS) -c $<
  
 clean cls:

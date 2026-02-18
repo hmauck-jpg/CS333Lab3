@@ -1,6 +1,6 @@
 CC = gcc
 DEBUG = -g
-DEFINES =
+DEFINES = -DNOISY_DEBUG
 CFLAGS = $(DEBUG) -Wall -Wextra -Wshadow -Wunreachable-code \
 	-Wredundant-decls -Wmissing-declarations \
 	-Wold-style-definition -Wmissing-prototypes \
@@ -12,7 +12,7 @@ PROG = desplodocus_mt
 all: $(PROG)
 
 $(PROG): $(PROG).o
-	$(CC) $(CFLAGS) -o $@ $^ -pthread -lcrypt
+	$(CC) $(CFLAGS) -o $@ $^ -pthread -lcrypt  
 
 $(PROG).o: $(PROG).c 
 	$(CC) $(CFLAGS) -c $<

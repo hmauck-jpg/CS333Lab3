@@ -5,6 +5,8 @@
 // hmauck@pdx.edu
 // this is the implementation file for the desplodocus program
  
+//valgrind --leak-check=full --show-leak-kinds=all
+//./desplodocus_mt -i hashes-nosalt-10.txt -p passwords-10.txt -t 1 -n -o v2.dat
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,10 +17,19 @@
 #include <sys/resource.h>
 #include <crypt.h>
 #include <string.h>
+#include <fcntl.h>
+
 
 
 #define OPTIONS "i:p:o:nt:vh"
 #define NICE_INCREMENT 10
+
+
+#ifdef NOISY_DEBUG 
+# define NOISY_DEBUG_PRINT fprintf(stderr, "%s %s %d\n", __FILE__, __func__, __LINE__)
+#else // NOISY_DEBUG
+# define NOISY_DEBUG_PRINT
+#endif // NOISY_DEBUG
 
 static int v = 0;
 static char * SALT = "./abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -66,9 +77,10 @@ void * threadFunction(void * thread);
 
 int main(int argc, char * argv[]) {
 
+     
     char * DESfile = NULL; //name of DES hash file
     char * passwordFile = NULL; //name of the plaintext password file
-    char * outFile; //name of the output file, default to stdout
+    char * outFile = NULL; //name of the output file, default to stdout
     //should I declare an int here, a file descriptor for the output file
     //and set it to STDOUT_FILENO later, if there is no o on command line?
     int outfd = -1; //output file descriptor
@@ -82,11 +94,15 @@ int main(int argc, char * argv[]) {
     int totalFailed = 0; //total failed hashes
     int totalProcessed = 0; //total hashes proccessed by all threads
 
+    struct timeval start, end; 
+    double elapsed = 0.0; //seconds from thread creation to thread joining
+
+    NOISY_DEBUG_PRINT;
 
     {
 
         int opt = -1;
-
+        NOISY_DEBUG_PRINT;
         while ((opt = getopt(argc, argv, OPTIONS)) != -1) {
             switch (opt) {
                 case 'i':
@@ -112,7 +128,16 @@ int main(int argc, char * argv[]) {
                     v = 1;
                     break;
                 case 'h':
-                    //find the instructor specifed help message
+                    printf("help text\n");
+                    printf("        desplodocus_mt ...\n");
+                    printf("        Options: i:o:p:t:nvh\n");
+                    printf("                -i file         hash file name (required)\n");
+                    printf("                -p file         plain word file name (required)\n");
+                    printf("                -o file         output file name (default stdout)\n");
+                    printf("                -t #            number of threads to create (default 1)\n");
+                    printf("                -n              be nice\n");
+                    printf("                -v              enable verbose mode\n");
+                    printf("                -h              helpful text\n");
                     exit(EXIT_SUCCESS);
                     break;
                 default:
@@ -124,6 +149,7 @@ int main(int argc, char * argv[]) {
 
     }
 
+     NOISY_DEBUG_PRINT;
     //might need to change all fprintf to an output file
     //depending on requirements
     if (outFile) {
@@ -133,21 +159,21 @@ int main(int argc, char * argv[]) {
         outfd = STDOUT_FILENO;
     } 
 
+    NOISY_DEBUG_PRINT;
     if (outFile) {
         FILE * fp = fopen(outFile, "w");
-        if (!fp) { 
-            fprintf(stderr "Output file %s refused to open", outFile); 
+        NOISY_DEBUG_PRINT;
+        if (!fp) {
+            NOISY_DEBUG_PRINT;
+            fprintf(stderr, "Output file %s refused to open", outFile); 
+            NOISY_DEBUG_PRINT;
             exit(EXIT_FAILURE); 
         }
-            stdout = fp;
+        dup2(fileno(fp), STDOUT_FILENO);
     }
 
 
-
-
-
-
-
+    NOISY_DEBUG_PRINT;
     if (!DESfile || !passwordFile) {
         fprintf(stderr, "Hash and Password files not specifed");
         exit(EXIT_FAILURE);
@@ -160,7 +186,7 @@ int main(int argc, char * argv[]) {
     threads = malloc(threadCount * sizeof(thread_data_t));
 
 
-
+    NOISY_DEBUG_PRINT;
     //initalize mutex
     data.nextHash = 0;
 
@@ -178,17 +204,22 @@ int main(int argc, char * argv[]) {
     //allocate exact memory
     //read file, storing strings 
     //use fopen and getline
-
+    NOISY_DEBUG_PRINT;
     if (!readHashes(&data, DESfile)) {
         fprintf(stderr, "Empty hash file");
         exit(EXIT_FAILURE);
     }
 
+    NOISY_DEBUG_PRINT;
     if (!readPasswords(&data, passwordFile)) {
         fprintf(stderr, "Empty password file");
         exit(EXIT_FAILURE);
     }
 
+    //start the timer
+    gettimeofday(&start, NULL);
+
+    NOISY_DEBUG_PRINT;
     //create threads
     //initalize an array of thread ids, and an array of thread data structs
     //make as many threads, as specified on command line 
@@ -203,17 +234,20 @@ int main(int argc, char * argv[]) {
         pthread_create(&tids[i], NULL, threadFunction, &threads[i]);
     }
 
-    
+    NOISY_DEBUG_PRINT;
     //join threads
     for (int i = 0; i < threadCount; ++i) {
         pthread_join(tids[i], NULL);
     }
 
+    //stop the timer
+    gettimeofday(&end, NULL);
+
  
     //do I need to find a away to pass my time structs back to main?
     //do I need to display these?
     
-
+     NOISY_DEBUG_PRINT;
     //sum the total, cracked, and failed passwords from each thread
     for (int i = 0; i < threadCount; ++i) {
         totalCracked += threads[i].cracked;
@@ -221,10 +255,12 @@ int main(int argc, char * argv[]) {
         totalProcessed += threads[i].total;
     }
 
-    
-    //print total summary
-    fprintf(stderr, "total : %d    <4.47> sec cracked:     %d failed: %d total: %d", threadCount, /*time*/, /*cracked*/, /*failed*/, /*total*/);
+    //calculate the elapsed time in seconds 
+    elapsed = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1000000.0;
 
+     NOISY_DEBUG_PRINT;
+    //print total summary
+    fprintf(stderr, "total : %d    %.2f sec cracked:     %d failed: %d total: %d", threadCount, elapsed, totalCracked, totalFailed, totalProcessed);
 
 
     //clean, deallocate memory 
@@ -309,7 +345,7 @@ void *threadFunction(void * thread) {
 
                         //use mutex when printing result 
                         pthread_mutex_lock(&shared->lock);
-                        printf("cracked: %s : %s\n", shared->hashes[index], thread->shared->passwords[p]);
+                        printf("cracked: %s : %s\n", shared->hashes[index], tdata->shared->passwords[p]);
                         pthread_mutex_unlock(&shared->lock);
 
                         //interate this thread's number of cracked passwords

@@ -6,7 +6,7 @@
 // this is the implementation file for the desplodocus program
  
 //valgrind --leak-check=full --show-leak-kinds=all
-//./desplodocus_mt -i hashes-nosalt-10.txt -p passwords-10.txt -t 1 -n -o v2.dat
+//./desplodocus_mt -i hashes-nosalt-10.txt -p passwords-10.txt -t 1 -n -o v2.data
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -73,6 +73,12 @@ int readPasswords(shared_data_t * data, char * passwordFile);
 // Inputs:
 // Return:
 void * threadFunction(void * thread);
+
+
+// Desc:
+// Inputs:
+// Return:
+void cleanUp(pthread_t * tids, thread_data_t * threads, char * outFile, shared_data_t * data, FILE * fp);
  
 
 int main(int argc, char * argv[]) {
@@ -81,14 +87,13 @@ int main(int argc, char * argv[]) {
     char * DESfile = NULL; //name of DES hash file
     char * passwordFile = NULL; //name of the plaintext password file
     char * outFile = NULL; //name of the output file, default to stdout
-    //should I declare an int here, a file descriptor for the output file
-    //and set it to STDOUT_FILENO later, if there is no o on command line?
-    int outfd = -1; //output file descriptor
-    
+    FILE * fp = stdout; //out file pointer set to stdout
+   
     int threadCount =  1; //number of threads to use
-    shared_data_t data; //struct holding hashes, passwords and mutex
-    pthread_t * tids; //array of thread ids
-    thread_data_t * threads; //array of structs containing threads data
+    shared_data_t data = {0}; //struct holding hashes, passwords and mutex
+    pthread_t * tids = NULL; //array of thread ids
+    thread_data_t * threads = NULL; //array of structs containing threads data
+     
 
     int totalCracked = 0; //total cracked hashes
     int totalFailed = 0; //total failed hashes
@@ -96,6 +101,7 @@ int main(int argc, char * argv[]) {
 
     struct timeval start, end; 
     double elapsed = 0.0; //seconds from thread creation to thread joining
+
 
     NOISY_DEBUG_PRINT;
 
@@ -106,13 +112,13 @@ int main(int argc, char * argv[]) {
         while ((opt = getopt(argc, argv, OPTIONS)) != -1) {
             switch (opt) {
                 case 'i':
-                     DESfile = strdup(optarg);
+                     DESfile = optarg;
                      break;
                 case 'p':
-                    passwordFile = strdup(optarg);
+                    passwordFile = optarg;
                     break;
                 case 'o':
-                    outFile = strdup(optarg);
+                    outFile = optarg;
                     break;
                 case 'n':
                     if(nice(NICE_INCREMENT) == -1) {
@@ -138,9 +144,11 @@ int main(int argc, char * argv[]) {
                     printf("                -n              be nice\n");
                     printf("                -v              enable verbose mode\n");
                     printf("                -h              helpful text\n");
+                    cleanUp(tids, threads, outFile, &data, fp);
                     exit(EXIT_SUCCESS);
                     break;
                 default:
+                    cleanUp(tids, threads, outFile, &data, fp);
                     exit(EXIT_FAILURE);
                     break;
             }
@@ -149,33 +157,29 @@ int main(int argc, char * argv[]) {
 
     }
 
-     NOISY_DEBUG_PRINT;
-    //might need to change all fprintf to an output file
-    //depending on requirements
-    if (outFile) {
-        outfd = open(outFile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (v) {
+        printf("Password file argument: %s\n", passwordFile);
     }
-    else {
-        outfd = STDOUT_FILENO;
-    } 
+     
+ 
 
     NOISY_DEBUG_PRINT;
     if (outFile) {
-        FILE * fp = fopen(outFile, "w");
+        fp = fopen(outFile, "w");
         NOISY_DEBUG_PRINT;
         if (!fp) {
             NOISY_DEBUG_PRINT;
             fprintf(stderr, "Output file %s refused to open", outFile); 
-            NOISY_DEBUG_PRINT;
+            cleanUp(tids, threads, outFile, &data, fp);
             exit(EXIT_FAILURE); 
-        }
-        dup2(fileno(fp), STDOUT_FILENO);
+        }   
     }
 
 
     NOISY_DEBUG_PRINT;
     if (!DESfile || !passwordFile) {
-        fprintf(stderr, "Hash and Password files not specifed");
+        fprintf(stderr, "Hash and Password files not specified");
+        cleanUp(tids, threads, outFile, &data, fp);
         exit(EXIT_FAILURE);
     }
 
@@ -192,6 +196,7 @@ int main(int argc, char * argv[]) {
 
     if (pthread_mutex_init(&data.lock, NULL) != 0) {
         fprintf(stderr, "Failed to initalize mutex");
+        cleanUp(tids, threads, outFile, &data, fp);
         exit(EXIT_FAILURE);
     }
 
@@ -207,15 +212,25 @@ int main(int argc, char * argv[]) {
     NOISY_DEBUG_PRINT;
     if (!readHashes(&data, DESfile)) {
         fprintf(stderr, "Empty hash file");
+        cleanUp(tids, threads, outFile, &data, fp);
         exit(EXIT_FAILURE);
     }
-
+    if (v) {
+        printf("Loaded %d hashes\n", data.hashCount);
+    }
+     
+     
     NOISY_DEBUG_PRINT;
     if (!readPasswords(&data, passwordFile)) {
         fprintf(stderr, "Empty password file");
+        cleanUp(tids, threads, outFile, &data, fp);
         exit(EXIT_FAILURE);
     }
-
+    
+    if (v) {
+        printf("Loaded %d passwords\n", data.passwordCount);
+    }
+     
     //start the timer
     gettimeofday(&start, NULL);
 
@@ -258,33 +273,53 @@ int main(int argc, char * argv[]) {
     //calculate the elapsed time in seconds 
     elapsed = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1000000.0;
 
-     NOISY_DEBUG_PRINT;
+    NOISY_DEBUG_PRINT;
     //print total summary
-    fprintf(stderr, "total : %d    %.2f sec cracked:     %d failed: %d total: %d", threadCount, elapsed, totalCracked, totalFailed, totalProcessed);
+    fprintf(stderr, "total : %d    %.2f sec cracked:     %d failed: %d total: %d\n", threadCount, elapsed, totalCracked, totalFailed, totalProcessed);
 
 
     //clean, deallocate memory 
     pthread_mutex_destroy(&data.lock);
 
-    for (int i = 0; i < data.hashCount; i++) {
-        free(data.hashes[i]);
-    }
-    free(data.hashes);
+    cleanUp(tids, threads, outFile, &data, fp);
+ 
+    return EXIT_SUCCESS;
+}
 
-    for (int i = 0; i < data.passwordCount; i++) {
-        free(data.passwords[i]);
+
+
+// Desc:
+// Inputs:
+// Return:
+void cleanUp(pthread_t * tids, thread_data_t * threads, char * outFile, shared_data_t * data, FILE * fp) {
+
+    if( data && data->hashes) {
+         for (int i = 0; i < data->hashCount; i++) {
+            free(data->hashes[i]);
+        }
+        free(data->hashes);
     }
-    free(data.passwords);
+    
+    if(data && data->passwords) {
+         for (int i = 0; i < data->passwordCount; i++) {
+            free(data->passwords[i]);
+        }
+        free(data->passwords);
+    }
+
 
     free(tids);
     free(threads);
-
+    
     if (outFile) {
-        close(outfd);
+        fclose(fp);
     }
-     
-    return EXIT_SUCCESS;
+    
+    return;
+
 }
+
+    
 
 
 // Desc:
@@ -296,15 +331,18 @@ void *threadFunction(void * thread) {
     shared_data_t *shared = tdata->shared;
     int index = 0;
     int cracked = 0;
-    char * result;
+    char * result = NULL;
     struct crypt_data cdata;
     struct timeval start, end;
     double elapsed = 0.0;
+    //cdata.initialized = 0;
+    //TRY
+    memset(&cdata, 0, sizeof(struct crypt_data));
+    //char salt[3];
 
+    
     gettimeofday(&start, NULL);
-
-    cdata.initialized = 0;
-
+ 
      
     // start infnite loop 
     while (1) {
@@ -318,10 +356,17 @@ void *threadFunction(void * thread) {
         //iterate to next hash within mutex
         pthread_mutex_unlock(&shared->lock);
 
-        if (index >= shared->hashCount)
+        if (index >= shared->hashCount) {
             break;
+        }
+
+
+        //TRY
+        //put memset inside the loop
+        //memset(&cdata, 0, sizeof(struct crypt_data));
 
         cracked = 0;
+ 
 
         //run cracking loop for all passwords, while thread is not cracked
         for (int p = 0; p < shared->passwordCount && !cracked; ++p) {
@@ -330,7 +375,6 @@ void *threadFunction(void * thread) {
             //loop through all possible salts
             //consider replaced 64 with defined macro
             for (int i = 0; i < 64 && !cracked; ++i) {
-                
                 for(int j = 0; j < 64; ++j) {
                     //generate next possible salt 
                     char salt[3];
@@ -338,26 +382,54 @@ void *threadFunction(void * thread) {
                     salt[1] = SALT[j];
                     salt[2] = '\0';
 
-                    result = crypt_rn(shared->passwords[p], salt, &cdata, sizeof(cdata));
+                    //result = crypt_rn(shared->passwords[p], salt, &cdata, sizeof(cdata));
+                    result = crypt_r(shared->passwords[p], salt, &cdata);
+                    //TRY using full hash in salt paratmeter, instead of 2 char salt 
+                    //this generates the exact same set of hashes in crypt_r apparently 
+                    //result = crypt_r(shared->passwords[p], shared->hashes[index], &cdata);
+                    //TRY crypt instead of crypt_r
+                    //result = crypt(shared->passwords[p], salt);
+
+                    //DEBUG
+                    /* if (strcmp(shared->hashes[index],"k.9r3wNfev2") == 0 && (strcmp(salt, "Sb") == 0) && (strcmp(shared->passwords[p], "Tx42sfqp") == 0)) {
+                        printf("Trying password=%s  salt=%s  result=%s  target=%s\n", shared->passwords[p], salt, result, shared->hashes[index]);
+                    }*/
+
+                    if (v) {
+                        printf("Trying password=%s  salt=%s  result=%s  target=%s\n", shared->passwords[p], salt, result, shared->hashes[index]);
+                    }
+                     
 
                     //check if this password + salt cracked the hash
-                    if (strcmp(result, shared->hashes[index]) == 0) {
+                    //result + 2 removes the salt from the resulting hash
+                    //in no salt files, the hash is the result of salt, but the salt is removed after hashing
+                    // mkpasswd -m des Tx42sfqp Sb  becomes Sbk.9r3wNfev2
+                    //cracked: k.9r3wNfev2 : Tx42sfqp
+                    if (strcmp(result + 2, shared->hashes[index]) == 0) {
 
                         //use mutex when printing result 
                         pthread_mutex_lock(&shared->lock);
                         printf("cracked: %s : %s\n", shared->hashes[index], tdata->shared->passwords[p]);
-                        pthread_mutex_unlock(&shared->lock);
 
+                        if (v) {
+                            printf("result: %s salt: %s\n", result, salt);
+                        }
+
+                        pthread_mutex_unlock(&shared->lock);
+                       
                         //interate this thread's number of cracked passwords
                         //good boy. 
                         ++tdata->cracked;
                         cracked = 1;
                         break;
-                    }
+                    } 
                 }
-
+                 
             }
+            //end salt generation outer while loop
+             
         }
+        //end cracking loop for all passwords
 
         //check if the thread failed to crack the hash
         if (!cracked) {
@@ -372,8 +444,12 @@ void *threadFunction(void * thread) {
         }
 
         ++tdata->total;
+            
+        
     }
+    //end of infinite loop
 
+        
     // compute time difference
     gettimeofday(&end, NULL);
     elapsed = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1000000.0;
@@ -467,6 +543,7 @@ int readPasswords(shared_data_t * data, char * passwordFile) {
 
     free(line);
     line = NULL;
+    length = 0;
     fclose(passFp);
 
     data->passwords = calloc(data->passwordCount, sizeof(char*));
@@ -494,5 +571,13 @@ int readPasswords(shared_data_t * data, char * passwordFile) {
 }
 
 
-
+ /*
+           //TRY
+        //extract first two chars to use as salt in all hashes
+        //instead of iterating through all possible salts
+        salt[0] = shared->hashes[index][0];
+        salt[1] = shared->hashes[index][1];
+        salt[2] = '\0';
+        
+*/
  

@@ -1,6 +1,6 @@
 CC = gcc
 DEBUG = -g
-DEFINES = -DNOISY_DEBUG
+DEFINES = 
 CFLAGS = $(DEBUG) -Wall -Wextra -Wshadow -Wunreachable-code \
 	-Wredundant-decls -Wmissing-declarations \
 	-Wold-style-definition -Wmissing-prototypes \

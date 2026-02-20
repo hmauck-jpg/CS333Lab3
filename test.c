@@ -149,3 +149,155 @@ wishart8
 SAGIAM
 spYfI3XYDPPH2
 */
+
+
+//og threadFunction without ordering edits
+
+/*
+
+
+
+// Desc:
+// Inputs:
+// Return:
+void *threadFunction(void * thread) {
+    
+    thread_data_t *tdata = (thread_data_t *) thread;
+    shared_data_t *shared = tdata->shared;
+    int index = 0;
+    int cracked = 0;
+    char * result = NULL;
+    struct crypt_data cdata;
+    struct timeval start, end;
+    double elapsed = 0.0;
+    //cdata.initialized = 0;
+    //TRY
+    memset(&cdata, 0, sizeof(struct crypt_data));
+    //char salt[3];
+
+    
+    gettimeofday(&start, NULL);
+ 
+     
+    // start infnite loop 
+    while (1) {
+
+        //protect shared counter, cannot access shared resource unless unlocked
+        pthread_mutex_lock(&shared->lock);
+
+        index = shared->nextHash;
+        ++shared->nextHash;
+
+        //iterate to next hash within mutex
+        pthread_mutex_unlock(&shared->lock);
+
+        if (index >= shared->hashCount) {
+            break;
+        }
+
+
+        //TRY
+        //put memset inside the loop
+        //memset(&cdata, 0, sizeof(struct crypt_data));
+
+        cracked = 0;
+ 
+
+        //run cracking loop for all passwords, while thread is not cracked
+        for (int p = 0; p < shared->passwordCount && !cracked; ++p) {
+            //char *password = shared->passwords[p];
+
+            //loop through all possible salts
+            //consider replaced 64 with defined macro
+            for (int i = 0; i < 64 && !cracked; ++i) {
+                for(int j = 0; j < 64; ++j) {
+                    //generate next possible salt 
+                    char salt[3];
+                    salt[0] = SALT[i];
+                    salt[1] = SALT[j];
+                    salt[2] = '\0';
+
+                    //result = crypt_rn(shared->passwords[p], salt, &cdata, sizeof(cdata));
+                    result = crypt_r(shared->passwords[p], salt, &cdata);
+                    //TRY using full hash in salt paratmeter, instead of 2 char salt 
+                    //this generates the exact same set of hashes in crypt_r apparently 
+                    //result = crypt_r(shared->passwords[p], shared->hashes[index], &cdata);
+                    //TRY crypt instead of crypt_r
+                    //result = crypt(shared->passwords[p], salt);
+
+                    //DEBUG
+                    //if (strcmp(shared->hashes[index],"k.9r3wNfev2") == 0 && (strcmp(salt, "Sb") == 0) && (strcmp(shared->passwords[p], "Tx42sfqp") == 0)) {
+                        //printf("Trying password=%s  salt=%s  result=%s  target=%s\n", shared->passwords[p], salt, result, shared->hashes[index]);
+                    //}
+
+                    if (v) {
+                        printf("Trying password=%s  salt=%s  result=%s  target=%s\n", shared->passwords[p], salt, result, shared->hashes[index]);
+                    }
+                     
+
+                    //check if this password + salt cracked the hash
+                    //result + 2 removes the salt from the resulting hash
+                    //in no salt files, the hash is the result of salt, but the salt is removed after hashing
+                    // mkpasswd -m des Tx42sfqp Sb  becomes Sbk.9r3wNfev2
+                    //cracked: k.9r3wNfev2 : Tx42sfqp
+                    if (strcmp(result + 2, shared->hashes[index]) == 0) {
+
+                        //use mutex when printing result 
+                        pthread_mutex_lock(&shared->lock);
+                        printf("cracked: %s : %s\n", shared->hashes[index], tdata->shared->passwords[p]);
+
+                        if (v) {
+                            printf("result: %s salt: %s\n", result, salt);
+                        }
+
+                        pthread_mutex_unlock(&shared->lock);
+                       
+                        //interate this thread's number of cracked passwords
+                        //good boy. 
+                        ++tdata->cracked;
+                        cracked = 1;
+                        break;
+                    } 
+                }
+                 
+            }
+            //end salt generation outer while loop
+             
+        }
+        //end cracking loop for all passwords
+
+        //check if the thread failed to crack the hash
+        if (!cracked) {
+            //use mutex when printing result 
+            pthread_mutex_lock(&shared->lock);
+            printf("*** failed: %s\n", shared->hashes[index]);
+            pthread_mutex_unlock(&shared->lock);
+
+            //iterate this threads number of failures
+            //L for thread
+            ++tdata->failed;
+        }
+
+        ++tdata->total;
+            
+        
+    }
+    //end of infinite loop
+
+        
+    // compute time difference
+    gettimeofday(&end, NULL);
+    elapsed = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1000000.0;
+
+    //print this thread's summary
+    //use the mutex to prevent interleaving
+    pthread_mutex_lock(&shared->lock);
+    fprintf(stderr, "thread: %2d %8.2f sec cracked: %5d failed: %5d total: %5d\n", tdata->threadId, elapsed, tdata->cracked, tdata->failed, tdata->total);
+    pthread_mutex_unlock(&shared->lock);
+
+    pthread_exit(NULL);
+
+
+} 
+*/
+ 

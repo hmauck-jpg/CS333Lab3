@@ -42,6 +42,9 @@ typedef struct {
     char **passwords;
     int passwordCount;
 
+    //TRY
+    char ** results;
+
     int nextHash;
     pthread_mutex_t lock;
 } shared_data_t;
@@ -59,25 +62,36 @@ typedef struct {
 
 
 
-// Desc:
-// Inputs:
-// Return:
+// Desc: Reads all hashes from the hash file 
+// Inputs: A pointer to a struct, which hold all hashes
+// passwords, and cracked results
+// and a char pointer to the name of the hash file
+// Return: Int, 1 if successful 
 int readHashes(shared_data_t  * data, char * DESfile);
 
-// Desc:
-// Inputs:
-// Return:
+// Desc: Reads all passwords from the password file 
+// Inputs: A pointer to a struct, which hold all hashes
+// passwords, and cracked results
+// and a char pointer to the name of the password file
+// Return: Int, 1 if successful 
 int readPasswords(shared_data_t * data, char * passwordFile);
 
-// Desc:
-// Inputs:
-// Return:
+
+// Desc: Gives each thread a struct of data, times an infinite loop
+// in which the mutex is unlocked and locked to access the next hash index
+// and the thread iterates through all passwords, and all 4069 possible salts 
+// to crack the hash correspoding to the index, while storing all cracked or failed
+// hashes in the in parameter of shared data between all threads
+// Inputs: void pointer to a struct of thread data for this thread
+// Return: Void 
 void * threadFunction(void * thread);
 
 
-// Desc:
-// Inputs:
-// Return:
+// Desc: Cleans up and deallocates all allocated memory in existance at time of termination
+// Inputs: pthread_t pointer to all the thread ids, thread_data_t pointer to the thread data, char pointer to the 
+// name of the output file, shared_data_t pointer to the struct of all hashes, passwords and results
+// FILE pointer to the outfile descriptor 
+// Return: Void
 void cleanUp(pthread_t * tids, thread_data_t * threads, char * outFile, shared_data_t * data, FILE * fp);
  
 
@@ -183,8 +197,7 @@ int main(int argc, char * argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    //is this the correct way to dynamically allocate memory? as I need to ensure no memory leaks
-    //will these arrays work, as pointers to arrays?
+    
     //allocate memory for tids and threads
     tids = malloc(threadCount * sizeof(pthread_t));
     threads = malloc(threadCount * sizeof(thread_data_t));
@@ -230,6 +243,10 @@ int main(int argc, char * argv[]) {
     if (v) {
         printf("Loaded %d passwords\n", data.passwordCount);
     }
+
+    //TRY
+    //allocate memory for results 
+    data.results = calloc(data.hashCount, sizeof(char *)); 
      
     //start the timer
     gettimeofday(&start, NULL);
@@ -255,13 +272,19 @@ int main(int argc, char * argv[]) {
         pthread_join(tids[i], NULL);
     }
 
+    //TRY
+    //print results
+    for (int i = 0; i < data.hashCount; ++i) {
+        if (data.results[i]) {
+            fprintf(fp, "%s", data.results[i]);
+        } 
+    }
+
+
     //stop the timer
     gettimeofday(&end, NULL);
 
- 
-    //do I need to find a away to pass my time structs back to main?
-    //do I need to display these?
-    
+  
      NOISY_DEBUG_PRINT;
     //sum the total, cracked, and failed passwords from each thread
     for (int i = 0; i < threadCount; ++i) {
@@ -286,11 +309,15 @@ int main(int argc, char * argv[]) {
     return EXIT_SUCCESS;
 }
 
+ 
 
-
-// Desc:
-// Inputs:
-// Return:
+// Desc: Gives each thread a struct of data, times an infinite loop
+// in which the mutex is unlocked and locked to access the next hash index
+// and the thread iterates through all passwords, and all 4069 possible salts 
+// to crack the hash correspoding to the index, while storing all cracked or failed
+// hashes in the in parameter of shared data between all threads
+// Inputs: void pointer to a struct of thread data for this thread
+// Return: Void 
 void cleanUp(pthread_t * tids, thread_data_t * threads, char * outFile, shared_data_t * data, FILE * fp) {
 
     if( data && data->hashes) {
@@ -305,6 +332,14 @@ void cleanUp(pthread_t * tids, thread_data_t * threads, char * outFile, shared_d
             free(data->passwords[i]);
         }
         free(data->passwords);
+    }
+
+    //TRY add
+    if(data && data->results) {
+         for (int i = 0; i < data->hashCount; i++) {
+            free(data->results[i]);
+        }
+        free(data->results);
     }
 
 
@@ -322,9 +357,13 @@ void cleanUp(pthread_t * tids, thread_data_t * threads, char * outFile, shared_d
     
 
 
-// Desc:
-// Inputs:
-// Return:
+// Desc: Gives each thread a struct of data, times an infinite loop
+// in which the mutex is unlocked and locked to access the next hash index
+// and the thread iterates through all passwords, and all 4069 possible salts 
+// to crack the hash correspoding to the index, while storing all cracked or failed
+// hashes in the in parameter of shared data between all threads
+// Inputs: void pointer to a struct of thread data for this thread
+// Return: Void 
 void *threadFunction(void * thread) {
     
     thread_data_t *tdata = (thread_data_t *) thread;
@@ -335,6 +374,7 @@ void *threadFunction(void * thread) {
     struct crypt_data cdata;
     struct timeval start, end;
     double elapsed = 0.0;
+    char buffer[256];
     //cdata.initialized = 0;
     //TRY
     memset(&cdata, 0, sizeof(struct crypt_data));
@@ -382,6 +422,7 @@ void *threadFunction(void * thread) {
                     salt[1] = SALT[j];
                     salt[2] = '\0';
 
+
                     //result = crypt_rn(shared->passwords[p], salt, &cdata, sizeof(cdata));
                     result = crypt_r(shared->passwords[p], salt, &cdata);
                     //TRY using full hash in salt paratmeter, instead of 2 char salt 
@@ -408,14 +449,18 @@ void *threadFunction(void * thread) {
                     if (strcmp(result + 2, shared->hashes[index]) == 0) {
 
                         //use mutex when printing result 
-                        pthread_mutex_lock(&shared->lock);
-                        printf("cracked: %s : %s\n", shared->hashes[index], tdata->shared->passwords[p]);
+                        //BUT try not if only storing result
+                        //pthread_mutex_lock(&shared->lock);
+                        //printf("cracked: %s : %s\n", shared->hashes[index], tdata->shared->passwords[p]);
+                        //TRY instead
+                        snprintf(buffer, sizeof(buffer), "cracked: %s : %s\n", shared->hashes[index], tdata->shared->passwords[p]);
+                        shared->results[index] = strdup(buffer);
 
                         if (v) {
                             printf("result: %s salt: %s\n", result, salt);
                         }
 
-                        pthread_mutex_unlock(&shared->lock);
+                        //pthread_mutex_unlock(&shared->lock);
                        
                         //interate this thread's number of cracked passwords
                         //good boy. 
@@ -434,9 +479,14 @@ void *threadFunction(void * thread) {
         //check if the thread failed to crack the hash
         if (!cracked) {
             //use mutex when printing result 
-            pthread_mutex_lock(&shared->lock);
-            printf("*** failed: %s\n", shared->hashes[index]);
-            pthread_mutex_unlock(&shared->lock);
+            //BUT try not if only storing result 
+            //pthread_mutex_lock(&shared->lock);
+            //printf("*** failed: %s\n", shared->hashes[index]);
+            //TRY instead
+            snprintf(buffer, sizeof(buffer),"*** failed: %s\n", shared->hashes[index]);
+            shared->results[index] = strdup(buffer);
+
+            //pthread_mutex_unlock(&shared->lock);
 
             //iterate this threads number of failures
             //L for thread
@@ -467,9 +517,11 @@ void *threadFunction(void * thread) {
 
 
 
-// Desc:
-// Inputs:
-// Return:
+// Desc: Reads all hashes from the hash file 
+// Inputs: A pointer to a struct, which hold all hashes
+// passwords, and cracked results
+// and a char pointer to the name of the hash file
+// Return: Int, 1 if successful 
 int readHashes(shared_data_t * data, char * DESfile) {
 
     FILE * DESfp; // hash file pointer
@@ -521,9 +573,11 @@ int readHashes(shared_data_t * data, char * DESfile) {
 
 }
 
-// Desc:
-// Inputs:
-// Return:
+// Desc: Reads all passwords from the password file 
+// Inputs: A pointer to a struct, which hold all hashes
+// passwords, and cracked results
+// and a char pointer to the name of the password file
+// Return: Int, 1 if successful 
 int readPasswords(shared_data_t * data, char * passwordFile) {
 
     FILE * passFp; // password file pointer
@@ -570,14 +624,5 @@ int readPasswords(shared_data_t * data, char * passwordFile) {
     return (data->passwordCount > 0) ? 1 : 0;
 }
 
-
- /*
-           //TRY
-        //extract first two chars to use as salt in all hashes
-        //instead of iterating through all possible salts
-        salt[0] = shared->hashes[index][0];
-        salt[1] = shared->hashes[index][1];
-        salt[2] = '\0';
-        
-*/
+ 
  
